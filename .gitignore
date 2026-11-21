@@ -221,3 +221,17 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Data (too big for GitHub)
+data/raw/
+data/processed/
+*.grib2
+*.nc
+*.zip
+
+# Secrets: never commit API keys
+.env
+
+# Notebook and OS clutter
+.ipynb_checkpoints/
+.DS_Store
