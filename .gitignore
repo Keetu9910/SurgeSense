@@ -228,10 +228,8 @@ data/processed/
 *.grib2
 *.nc
 *.zip
-
-# Secrets: never commit API keys
-.env
+*.tif
+*.tiff
 
 # Notebook and OS clutter
-.ipynb_checkpoints/
 .DS_Store
