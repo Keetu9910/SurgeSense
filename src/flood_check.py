@@ -3,7 +3,13 @@ flood_check.py – For each NHC advisory and each Lee County evacuation route
 point, extract the maximum inundation class within a per-route search radius
 using a rasterio window read (never loading the full raster).  Writes
 data/processed/route_flood.csv and prints the first advisory that flagged each
-route impassable (class >= 2).
+route impassable under two rules:
+  - impassable           : elevation-aware (flood depth lower bound >= road_height_ft)
+  - impassable_depth_only: original rule (class >= 2, i.e. >1 ft above ground)
+
+NOTE: road_height_ft for low causeways is an assumption (~3 ft); actual
+roadway elevation varies and has not been surveyed here.  High-bridge
+approaches can still flood from surge at the abutments — that is not modeled.
 """
 
 import csv
@@ -25,7 +31,11 @@ OUT_CSV = PROC_DIR / "route_flood.csv"
 # Default half-width of the sampling window in degrees (~0.001° ≈ 100 m).
 HALF_DEG = 0.001
 
-IMPASSABLE_CLASS = 2  # class >= 2 means >1 ft inundation
+IMPASSABLE_CLASS = 2  # depth-only rule: class >= 2 means >1 ft above ground
+
+# Lower-bound water depth (ft above ground) for each uint8 flood class.
+# Class 0 = nodata/dry; class 1 = 0–1 ft; 2 = >1 ft; 3 = >3 ft; 4 = >6 ft; 5 = >9 ft.
+CLASS_LOWER_BOUND = {0: 0, 1: 0, 2: 1, 3: 3, 4: 6, 5: 9}
 
 
 # ---------------------------------------------------------------------------
@@ -79,7 +89,8 @@ def load_routes() -> list[dict]:
                 "name": row["name"].strip(),
                 "lat": float(row["lat"]),
                 "lon": float(row["lon"]),
-                "radius_deg": float(row.get("radius_m") or 100) / 100_000,  # CHANGED
+                "radius_deg": float(row.get("radius_m") or 100) / 100_000,
+                "road_height_ft": float(row.get("road_height_ft") or 3),
             })
     return routes
 
@@ -98,17 +109,21 @@ def main() -> None:
         tif_path = find_tif(adv_dir)
         with rasterio.open(tif_path) as src:
             for route in routes:
-                cls = sample_point(src, route["lon"], route["lat"], route["radius_deg"])  # CHANGED
-                impassable = cls >= IMPASSABLE_CLASS
+                cls = sample_point(src, route["lon"], route["lat"], route["radius_deg"])
+                depth_lb = CLASS_LOWER_BOUND.get(cls, 0)
+                impassable = depth_lb >= route["road_height_ft"]
+                impassable_depth_only = cls >= IMPASSABLE_CLASS
                 rows.append({
                     "advisory": adv,
                     "route": route["name"],
                     "flood_class": cls,
                     "impassable": impassable,
+                    "impassable_depth_only": impassable_depth_only,
                 })
 
+    fieldnames = ["advisory", "route", "flood_class", "impassable", "impassable_depth_only"]
     with open(OUT_CSV, "w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=["advisory", "route", "flood_class", "impassable"])
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(rows)
     print(f"Wrote {len(rows)} rows to {OUT_CSV}")
@@ -118,7 +133,7 @@ def main() -> None:
         if r["impassable"] and r["route"] not in first_flag:
             first_flag[r["route"]] = r["advisory"]
 
-    print("\nFirst advisory flagging each route impassable:")
+    print("\nFirst advisory flagging each route impassable (elevation-aware):")
     for route in routes:
         adv_flag = first_flag.get(route["name"])
         if adv_flag is not None:
